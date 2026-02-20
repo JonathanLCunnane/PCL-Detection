@@ -1,0 +1,13 @@
+{
+  "lr": 2.9593617105719396e-05,
+  "hidden_dim": 0,
+  "weight_decay": 0.002686349764251489,
+  "warmup_fraction": 0.05,
+  "pooling": "cls_mean",
+  "head_lr_multiplier": 1,
+  "label_smoothing": 0.07500000000000001,
+  "batch_size": 32,
+  "num_epochs": 12,
+  "patience": 4,
+  "best_threshold": 0.5000000000000002
+}
