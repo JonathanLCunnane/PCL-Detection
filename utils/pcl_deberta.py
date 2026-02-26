@@ -2,6 +2,7 @@ from enum import Enum
 from torch import nn
 import torch
 from transformers import AutoModel
+from utils.feature_comb import FeatureComb
 from logging import getLogger
 
 LOG = getLogger(__name__)
@@ -27,9 +28,22 @@ class PCLClassifierHead(nn.Module):
     """
 
     def __init__(self, cls_dim: int = 768, hidden_dim: int = 256,
-                 dropout_rate: float = 0.1, n_extra_features: int = 0):
+                 dropout_rate: float = 0.1, n_extra_features: int = 0,
+                 feature_comb_method=FeatureComb.CONCAT,
+                 ):
         super().__init__()
-        input_dim = cls_dim + n_extra_features
+        match feature_comb_method:
+            case FeatureComb.CONCAT:
+                self.feature_combiner = lambda cls, extra: torch.cat([cls, extra], dim=-1)
+                input_dim = cls_dim + n_extra_features
+            case FeatureComb.GMF:
+                # Learn a gating scalar to combine CLS and extra features
+                self.encode = nn.Linear(n_extra_features, cls_dim) # Project extra features to same dim as CLS for element-wise ops
+                input_dim = cls_dim  # After gating, we keep the same dimension as CLS
+                self.gate = nn.Linear(cls_dim * 2, cls_dim)
+                self.gate_activation = nn.Sigmoid()
+                self.feature_combiner = self._gmf_combine
+
         if hidden_dim > 0:
             self.head = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
@@ -44,10 +58,20 @@ class PCLClassifierHead(nn.Module):
     def forward(self, cls_embedding: torch.Tensor,
                 extra_features: torch.Tensor | None = None) -> torch.Tensor:
         if extra_features is not None:
-            x = torch.cat([cls_embedding, extra_features], dim=-1)
+            print("we doin extra")
+            x = self.feature_combiner(cls_embedding, extra_features)
         else:
             x = cls_embedding
         return self.head(x)
+    
+    def _gmf_combine(self, first: torch.Tensor, second: torch.Tensor) -> torch.Tensor:
+        second = self.encode(second)  # Project extra features to same dimension as CLS
+        print("omg we doing it")
+        assert first.shape == second.shape, "For GMF, CLS and extra features must have the same dimension after encoding"
+        combined = torch.cat([first, second], dim=-1)
+        g = self.gate_activation(self.gate(combined))
+        r = g * first + (1 - g) * second
+        return r
     
 
 class PCLDeBERTa(nn.Module):
@@ -60,6 +84,10 @@ class PCLDeBERTa(nn.Module):
       - MAX:      Element-wise max over non-padding tokens.
       - CLS_MEAN: Concatenate [CLS] and mean pooled (doubles input dim to 1536).
 
+    Feature combination methods (searched via FeatureComb enum):
+        - CONCAT:   Concatenate extra features to the pooled CLS representation.
+        - GMF:      Gated Multimodal Fusion (learned weighted average of CLS and scaled extra features).
+
     DeBERTa-v3 was pretrained with RTD (not NSP), so [CLS] has no specially
     learned representation — mean/max pooling may outperform it, but we
     search over all strategies to let the data decide.
@@ -67,6 +95,7 @@ class PCLDeBERTa(nn.Module):
 
     def __init__(self, hidden_dim: int = 256, dropout_rate: float = 0.1,
                  n_extra_features: int = 0, pooling: PoolingStrategy = PoolingStrategy.MEAN,
+                 feature_comb_method: FeatureComb = FeatureComb.CONCAT,
                  model_name: str = "microsoft/deberta-v3-base"):
         super().__init__()
         self.pooling = pooling
@@ -85,7 +114,8 @@ class PCLDeBERTa(nn.Module):
             cls_dim=cls_dim,
             hidden_dim=hidden_dim,
             dropout_rate=dropout_rate,
-            n_extra_features=n_extra_features
+            n_extra_features=n_extra_features,
+            feature_comb_method=feature_comb_method,
         )
 
     def _pool(self, last_hidden: torch.Tensor,

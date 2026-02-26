@@ -10,6 +10,7 @@ def evaluate(
     model: nn.Module,
     device: torch.device,
     dataloader: DataLoader,
+    criterion: nn.Module = nn.BCEWithLogitsLoss(),
     threshold: float = 0.5,
 ) -> dict:
     """
@@ -21,6 +22,9 @@ def evaluate(
     all_scores = []
     all_labels = []
 
+
+    total_loss = 0.0
+    num_batches = 0
     for batch in dataloader:
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
@@ -30,11 +34,13 @@ def evaluate(
         unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features).squeeze(-1)
         all_scores.append(unnormalised_scores.cpu())
         all_labels.append(labels.cpu())
+        total_loss += criterion(unnormalised_scores, labels).item()
+        num_batches += 1
 
     all_scores = torch.cat(all_scores)
     all_labels = torch.cat(all_labels)
 
-    loss = nn.functional.binary_cross_entropy_with_logits(all_scores, all_labels).item()
+    loss = total_loss / num_batches if num_batches > 0 else 0.0
 
     probs = torch.sigmoid(all_scores)
     thresh_preds = (probs >= threshold).long().numpy()

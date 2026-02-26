@@ -100,11 +100,14 @@ def train_model(
                 train_losses.append(avg_train_loss)
                 running_loss = 0.0
 
-                val_metrics = evaluate(model, device, val_loader)
+
+                val_metrics = evaluate(model, device, val_loader, criterion=criterion)
                 val_f1 = val_metrics["f1"]
+                val_loss = val_metrics["loss"]
 
                 LOG.info(
                     f"Step {global_step} | Train Loss: {avg_train_loss:.4f} | "
+                    f"Val Loss: {val_loss:.4f} | "
                     f"Val F1: {val_f1:.4f} | Val P: {val_metrics['precision']:.4f} | "
                     f"Val R: {val_metrics['recall']:.4f}"
                 )
@@ -136,8 +139,11 @@ def train_model(
     LOG.info(f"Optimal threshold: {best_thresh:.3f} (val F1 with threshold: {thresh_val_f1:.4f}, "
              f"val F1 @0.5: {best_val_f1:.4f})")
 
-    dev_metrics = evaluate(model, device, dev_loader, threshold=best_thresh)
+
+    dev_metrics = evaluate(model, device, dev_loader, criterion=criterion, threshold=best_thresh)
+    dev_loss = dev_metrics["loss"]
     LOG.info(
+        f"Dev Loss: {dev_loss:.4f} | "
         f"Dev F1: {dev_metrics['f1']:.4f} | "
         f"Dev P: {dev_metrics['precision']:.4f} | Dev R: {dev_metrics['recall']:.4f} | "
         f"Threshold: {best_thresh:.3f}"
