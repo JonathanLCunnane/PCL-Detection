@@ -1,0 +1,14 @@
+{
+  "lr": 2.4352078417720258e-05,
+  "warmup_fraction": 0.08,
+  "hidden_dim": 128,
+  "dropout_rate": 0.4,
+  "weight_decay": 0.005019315676644375,
+  "head_lr_multiplier": 7,
+  "label_smoothing": 0.2,
+  "batch_size": 48,
+  "num_epochs": 20,
+  "patience": 6,
+  "best_threshold": 0.30000000000000004,
+  "n_extra_features": 27
+}

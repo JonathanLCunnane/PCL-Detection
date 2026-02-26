@@ -1,13 +1,14 @@
 {
-  "lr": 3.3113318919208885e-05,
-  "warmup_fraction": 0.09,
-  "hidden_dim": 256,
+  "lr": 2.9062124930075867e-05,
+  "warmup_fraction": 0.04,
+  "hidden_dim": 512,
   "dropout_rate": 0.1,
-  "weight_decay": 1.3667272915456215e-05,
-  "head_lr_multiplier": 15,
-  "label_smoothing": 0.1,
+  "weight_decay": 1.5673095467235405e-05,
+  "head_lr_multiplier": 5,
+  "label_smoothing": 0.0,
   "batch_size": 48,
   "num_epochs": 20,
   "patience": 6,
-  "best_threshold": 0.42500000000000016
+  "best_threshold": 0.6750000000000004,
+  "n_extra_features": 6
 }
