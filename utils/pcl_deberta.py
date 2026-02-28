@@ -58,7 +58,6 @@ class PCLClassifierHead(nn.Module):
     def forward(self, cls_embedding: torch.Tensor,
                 extra_features: torch.Tensor | None = None) -> torch.Tensor:
         if extra_features is not None:
-            print("we doin extra")
             x = self.feature_combiner(cls_embedding, extra_features)
         else:
             x = cls_embedding
@@ -66,7 +65,6 @@ class PCLClassifierHead(nn.Module):
     
     def _gmf_combine(self, first: torch.Tensor, second: torch.Tensor) -> torch.Tensor:
         second = self.encode(second)  # Project extra features to same dimension as CLS
-        print("omg we doing it")
         assert first.shape == second.shape, "For GMF, CLS and extra features must have the same dimension after encoding"
         combined = torch.cat([first, second], dim=-1)
         g = self.gate_activation(self.gate(combined))
