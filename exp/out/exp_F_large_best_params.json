@@ -1,0 +1,17 @@
+{
+  "lr": 4.649345697900868e-06,
+  "hidden_dim": 256,
+  "dropout_rate": 0.1,
+  "weight_decay": 0.000747599299995651,
+  "head_lr_multiplier": 10,
+  "warmup_fraction": 0.1,
+  "label_smoothing": 0.0,
+  "pooling": "CLS_MEAN",
+  "batch_size": 2,
+  "accumulation_steps": 16,
+  "effective_batch_size": 32,
+  "num_epochs": 12,
+  "patience": 4,
+  "best_threshold": 0.5000000000000002,
+  "model_name": "microsoft/deberta-v3-large"
+}

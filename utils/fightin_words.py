@@ -50,6 +50,37 @@ def compute_fightin_words_zscores(paras, labels, ns=(1,2,3), min_count=10):
     return z_scores, log_odds, pos_counts, neg_counts
 
 
+def build_topk_ngrams(z_dict: dict, k: int = 50) -> list[str]:
+    """
+    Return the top-k n-grams sorted by |z-score| (most discriminative first).
+    These are the n-grams most strongly associated with either PCL or non-PCL class.
+    """
+    return sorted(z_dict, key=lambda w: abs(z_dict[w]), reverse=True)[:k]
+
+
+def extract_topk_zscore_features(doc, topk_ngrams: list[str], ns: tuple = (1, 2, 3)) -> np.ndarray:
+    """
+    Binary indicator vector of shape (len(topk_ngrams),):
+    1.0 if the n-gram appears in the document, 0.0 otherwise.
+
+    Preserves the identity of which specific PCL-leaning n-grams appear,
+    rather than aggregate statistics (cf. extract_zscore_features).
+    """
+    tokens = [t.lemma_.lower() if t.is_alpha else "###" for t in doc]
+    present = set()
+    for n in ns:
+        for i in range(len(tokens) - n + 1):
+            chunk = tokens[i:i + n]
+            if "###" in chunk:
+                continue
+            present.add(" ".join(chunk))
+
+    return np.array(
+        [1.0 if ng in present else 0.0 for ng in topk_ngrams],
+        dtype=np.float32,
+    )
+
+
 def extract_zscore_features(doc, z_dict, ns=(1,2,3), zscore_threshold=1.96):
     tokens = [t.lemma_.lower() if t.is_alpha else "###" for t in doc]
     ngram_zscores = []

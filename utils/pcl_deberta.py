@@ -10,10 +10,11 @@ LOG = getLogger(__name__)
 
 class PoolingStrategy(Enum):
     """Pooling strategies for extracting a fixed-size representation from the backbone."""
-    CLS = "cls"           # [CLS] token (index 0)
-    MEAN = "mean"         # Attention-mask-weighted mean
-    MAX = "max"           # Element-wise max over non-padding tokens
-    CLS_MEAN = "cls_mean" # Concatenation of CLS and mean (2x hidden size)
+    CLS = "cls"               # [CLS] token (index 0)
+    MEAN = "mean"             # Attention-mask-weighted mean
+    MAX = "max"               # Element-wise max over non-padding tokens
+    CLS_MEAN = "cls_mean"     # Concatenation of CLS and mean (2x hidden size)
+    SCALAR_MIX = "scalar_mix" # Learned convex combination of all 13 hidden states, then mean-pooled
 
 
 class PCLClassifierHead(nn.Module):
@@ -29,7 +30,7 @@ class PCLClassifierHead(nn.Module):
 
     def __init__(self, cls_dim: int = 768, hidden_dim: int = 256,
                  dropout_rate: float = 0.1, n_extra_features: int = 0,
-                 feature_comb_method=FeatureComb.CONCAT,
+                 feature_comb_method=FeatureComb.CONCAT, n_out: int = 1,
                  ):
         super().__init__()
         match feature_comb_method:
@@ -49,11 +50,11 @@ class PCLClassifierHead(nn.Module):
                 nn.Linear(input_dim, hidden_dim),
                 nn.GELU(),
                 nn.Dropout(dropout_rate),
-                nn.Linear(hidden_dim, 1),
+                nn.Linear(hidden_dim, n_out),
             )
         else:
             # Single linear layer — matches SimpleTransformers / HuggingFace default
-            self.head = nn.Linear(input_dim, 1)
+            self.head = nn.Linear(input_dim, n_out)
 
     def forward(self, cls_embedding: torch.Tensor,
                 extra_features: torch.Tensor | None = None) -> torch.Tensor:
@@ -77,14 +78,21 @@ class PCLDeBERTa(nn.Module):
     Full model: DeBERTa backbone + PCLClassifierHead.
 
     Pooling strategies (searched as a hyperparameter via PoolingStrategy enum):
-      - CLS:      Use the [CLS] token representation (index 0).
-      - MEAN:     Attention-mask-weighted mean over all tokens.
-      - MAX:      Element-wise max over non-padding tokens.
-      - CLS_MEAN: Concatenate [CLS] and mean pooled (doubles input dim to 1536).
+      - CLS:        Use the [CLS] token representation (index 0).
+      - MEAN:       Attention-mask-weighted mean over all tokens.
+      - MAX:        Element-wise max over non-padding tokens.
+      - CLS_MEAN:   Concatenate [CLS] and mean pooled (doubles input dim to 1536).
+      - SCALAR_MIX: Learned convex combination of all 13 hidden states, then mean-pooled.
 
     Feature combination methods (searched via FeatureComb enum):
         - CONCAT:   Concatenate extra features to the pooled CLS representation.
         - GMF:      Gated Multimodal Fusion (learned weighted average of CLS and scaled extra features).
+
+    n_out controls the number of output logits:
+      - n_out=1 (default): binary PCL classification
+      - n_out=1+n_categories: multi-task binary + per-category (Exp C)
+        logits[:, 0]  — binary PCL score
+        logits[:, 1:] — per-category scores
 
     DeBERTa-v3 was pretrained with RTD (not NSP), so [CLS] has no specially
     learned representation — mean/max pooling may outperform it, but we
@@ -94,13 +102,17 @@ class PCLDeBERTa(nn.Module):
     def __init__(self, hidden_dim: int = 256, dropout_rate: float = 0.1,
                  n_extra_features: int = 0, pooling: PoolingStrategy = PoolingStrategy.MEAN,
                  feature_comb_method: FeatureComb = FeatureComb.CONCAT,
-                 model_name: str = "microsoft/deberta-v3-base"):
+                 model_name: str = "microsoft/deberta-v3-base",
+                 gradient_checkpointing: bool = True,
+                 n_out: int = 1):
         super().__init__()
         self.pooling = pooling
+        self.n_out = n_out
 
         self.backbone = AutoModel.from_pretrained(model_name)
         self.backbone = self.backbone.float()
-        self.backbone.gradient_checkpointing_enable()
+        if gradient_checkpointing:
+            self.backbone.gradient_checkpointing_enable()
         LOG.info(f"Backbone model loaded: {self.backbone.__class__.__name__}, dtype {self.backbone.dtype}, "
                  f"gradient_checkpointing={self.backbone.is_gradient_checkpointing}")
 
@@ -108,16 +120,22 @@ class PCLDeBERTa(nn.Module):
         # cls_mean concatenates two representations -> 2x hidden size
         cls_dim = base_dim * 2 if pooling == PoolingStrategy.CLS_MEAN else base_dim
 
+        # SCALAR_MIX: learnable weights over 13 hidden states (embedding + 12 transformer layers)
+        if pooling == PoolingStrategy.SCALAR_MIX:
+            self.layer_weights = nn.Parameter(torch.zeros(13))
+
         self.classifier = PCLClassifierHead(
             cls_dim=cls_dim,
             hidden_dim=hidden_dim,
             dropout_rate=dropout_rate,
             n_extra_features=n_extra_features,
             feature_comb_method=feature_comb_method,
+            n_out=n_out,
         )
 
     def _pool(self, last_hidden: torch.Tensor,
-              attention_mask: torch.Tensor) -> torch.Tensor:
+              attention_mask: torch.Tensor,
+              hidden_states: tuple | None = None) -> torch.Tensor:
         """Apply the configured pooling strategy."""
         if self.pooling == PoolingStrategy.CLS:
             return last_hidden[:, 0, :]  # [CLS] is always index 0
@@ -134,6 +152,16 @@ class PCLDeBERTa(nn.Module):
             last_hidden = last_hidden.masked_fill(mask_expanded == 0, -1e9)
             return last_hidden.max(dim=1).values
 
+        if self.pooling == PoolingStrategy.SCALAR_MIX:
+            # Softmax-weighted sum over all 13 hidden states, then mean-pool
+            # hidden_states: tuple of 13 tensors each (B, seq_len, hidden)
+            stacked = torch.stack(hidden_states, dim=0)  # (13, B, seq_len, hidden)
+            weights = torch.softmax(self.layer_weights, dim=0)  # (13,)
+            mixed = (stacked * weights.view(13, 1, 1, 1)).sum(0)  # (B, seq_len, hidden)
+            sum_hidden = (mixed * mask_expanded).sum(dim=1)
+            count = mask_expanded.sum(dim=1).clamp(min=1e-9)
+            return sum_hidden / count
+
         # PoolingStrategy.CLS_MEAN
         cls_repr = last_hidden[:, 0, :]
         sum_hidden = (last_hidden * mask_expanded).sum(dim=1)
@@ -144,13 +172,25 @@ class PCLDeBERTa(nn.Module):
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
                 token_type_ids: torch.Tensor | None = None,
                 extra_features: torch.Tensor | None = None) -> torch.Tensor:
-        outputs = self.backbone(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids
-        )
-        last_hidden = outputs.last_hidden_state  # (B, seq_len, hidden)
+        if self.pooling == PoolingStrategy.SCALAR_MIX:
+            outputs = self.backbone(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                output_hidden_states=True,
+            )
+            last_hidden = outputs.last_hidden_state
+            pooled = self._pool(last_hidden, attention_mask, outputs.hidden_states)
+        else:
+            outputs = self.backbone(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+            )
+            last_hidden = outputs.last_hidden_state
+            pooled = self._pool(last_hidden, attention_mask)
 
-        pooled = self._pool(last_hidden, attention_mask)
         scores = self.classifier(pooled, extra_features)
         return scores
+
+

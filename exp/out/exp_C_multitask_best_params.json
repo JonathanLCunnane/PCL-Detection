@@ -1,0 +1,24 @@
+{
+  "lr": 1.102943717573979e-05,
+  "weight_decay": 0.0071144760093434225,
+  "hidden_dim": 0,
+  "head_lr_multiplier": 1,
+  "category_weight": 0.1,
+  "pooling": "CLS_MEAN",
+  "warmup_fraction": 0.1,
+  "label_smoothing": 0.0,
+  "batch_size": 32,
+  "num_epochs": 12,
+  "patience": 4,
+  "best_threshold": 0.5250000000000002,
+  "n_categories": 7,
+  "pcl_categories": [
+    "Authority_voice",
+    "Compassion",
+    "Metaphors",
+    "Presupposition",
+    "Shallow_solution",
+    "The_poorer_the_merrier",
+    "Unbalanced_power_relations"
+  ]
+}

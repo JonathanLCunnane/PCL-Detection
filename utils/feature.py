@@ -6,6 +6,7 @@ class FeatureType(Enum):
     POS = "pos"
     NER = "ner"
     ZSCORE = "zscore"
+    KEYWORD = "keyword"  # one-hot encoding of the article keyword metadata field
 
 # POS/NER feature extraction
 
@@ -40,3 +41,15 @@ def extract_ner_features(doc, NER_TYPES) -> dict[int, dict[str, float]]:
 
 def extract_pos_ner_features(doc, POS_TAGS, NER_TYPES) -> tuple[dict, dict]:
     return (extract_pos_features(doc, POS_TAGS), extract_ner_features(doc, NER_TYPES))
+
+
+def extract_keyword_feature(keyword: str, keyword_to_idx: dict) -> np.ndarray:
+    """
+    One-hot encode a keyword value into a vector of length len(keyword_to_idx).
+    Keywords not present in keyword_to_idx (e.g. from dev set) get a zero vector.
+    """
+    vec = np.zeros(len(keyword_to_idx), dtype=np.float32)
+    idx = keyword_to_idx.get(keyword)
+    if idx is not None:
+        vec[idx] = 1.0
+    return vec
