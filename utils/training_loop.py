@@ -34,6 +34,7 @@ def train_model(
     accumulate_grad_batches: int = 1,
     use_8bit_adam: bool = False,
     trial: optuna.trial.Trial | None = None,
+    criterion: nn.Module | None = None,
 ) -> dict:
     """
     Train the model with early stopping, cosine annealing with warmup,
@@ -48,10 +49,13 @@ def train_model(
             eval_every_n_steps refers to optimizer steps, not micro-batches.
         use_8bit_adam: Use bitsandbytes 8-bit AdamW (saves ~2.4 GB for large models).
             Falls back to standard AdamW if bitsandbytes is not installed.
+        criterion: Custom loss module (e.g. FocalLoss). If None, defaults to
+            BCEWithLogitsLoss(pos_weight=pos_weight).
 
     Returns dict with keys: best_val_f1, best_threshold, dev_metrics, train_losses.
     """
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    if criterion is None:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # Differential LR: head learns head_lr_multiplier times faster than backbone
     backbone_params = list(model.backbone.parameters())
