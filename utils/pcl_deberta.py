@@ -1,7 +1,7 @@
 from enum import Enum
 from torch import nn
 import torch
-from transformers import AutoModel
+from transformers import AutoModel, AutoModelForMaskedLM
 from utils.feature_comb import FeatureComb
 from logging import getLogger
 
@@ -171,7 +171,8 @@ class PCLDeBERTa(nn.Module):
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
                 token_type_ids: torch.Tensor | None = None,
-                extra_features: torch.Tensor | None = None) -> torch.Tensor:
+                extra_features: torch.Tensor | None = None,
+                mask_token_indices: torch.Tensor | None = None) -> torch.Tensor:
         if self.pooling == PoolingStrategy.SCALAR_MIX:
             outputs = self.backbone(
                 input_ids=input_ids,
@@ -193,4 +194,131 @@ class PCLDeBERTa(nn.Module):
         scores = self.classifier(pooled, extra_features)
         return scores
 
+
+class PCLDeBERTaVerbalizer(nn.Module):
+    """
+    Multi-Word Verbalizer model for PCL detection.
+
+    Instead of pooling hidden states through a classifier head, this model:
+      1. Takes input with a single [MASK] token inserted via a template
+         (e.g. "{text} . It was [MASK] .")
+      2. Runs through AutoModelForMaskedLM to get vocabulary logits at the [MASK]
+      3. Computes class scores from log-probabilities of verbalizer tokens
+
+    Binary score:
+        score = mean(log P(pos_word_i | mask)) - mean(log P(neg_word_j | mask))
+
+    This is a log-odds ratio, so sigmoid(score) = P(pos)/(P(pos)+P(neg)),
+    making it directly compatible with BCEWithLogitsLoss.
+
+    Multi-word verbalizers use multiple representative words per class
+    (e.g. pos=["patronising", "condescending", "belittling"],
+     neg=["respectful", "fair", "genuine"]).  Each word contributes its
+    first subword token; log-probs are averaged within each class.
+
+    Example:
+        tokeniser = AutoTokenizer.from_pretrained("microsoft/deberta-v3-base")
+        pos_ids = [tokeniser.encode(w, add_special_tokens=False)[0]
+                   for w in ["patronising", "condescending"]]
+        neg_ids = [tokeniser.encode(w, add_special_tokens=False)[0]
+                   for w in ["respectful", "fair"]]
+        model = PCLDeBERTaVerbalizer(pos_ids, neg_ids)
+
+    Training-loop compatibility:
+        Exposes `.backbone` and `.classifier` properties for differential
+        LR param groups in train_model().  The training loop and eval functions
+        must pass `mask_token_indices` (B,) from the batch dict to forward().
+    """
+
+    def __init__(self,
+                 pos_verbalizer_ids: list[int],
+                 neg_verbalizer_ids: list[int],
+                 model_name: str = "microsoft/deberta-v3-base",
+                 gradient_checkpointing: bool = True):
+        super().__init__()
+        assert len(pos_verbalizer_ids) >= 1, "Need at least one positive verbalizer token"
+        assert len(neg_verbalizer_ids) >= 1, "Need at least one negative verbalizer token"
+
+        self.n_pos = len(pos_verbalizer_ids)
+        self.n_neg = len(neg_verbalizer_ids)
+        self.n_out = 1  # always binary for verbalizer approach
+
+        # Registered as buffers: move with .to(device), saved in state_dict
+        self.pos_ids: torch.Tensor
+        self.neg_ids: torch.Tensor
+        self.register_buffer("pos_ids", torch.tensor(pos_verbalizer_ids, dtype=torch.long))
+        self.register_buffer("neg_ids", torch.tensor(neg_verbalizer_ids, dtype=torch.long))
+
+        self._mlm = AutoModelForMaskedLM.from_pretrained(model_name)
+        self._mlm = self._mlm.float()
+        if gradient_checkpointing:
+            self._mlm.gradient_checkpointing_enable()
+
+        LOG.info(
+            f"Verbalizer model loaded: {self._mlm.__class__.__name__}, "
+            f"n_pos={self.n_pos}, n_neg={self.n_neg}, "
+            f"pos_ids={pos_verbalizer_ids}, neg_ids={neg_verbalizer_ids}"
+        )
+
+    # ------------------------------------------------------------------
+    # Properties for training-loop compatibility (differential LR)
+    # ------------------------------------------------------------------
+    @property
+    def backbone(self) -> nn.Module:
+        """The transformer encoder (for lower LR param group)."""
+        # DebertaV2ForMaskedLM stores the encoder as .deberta
+        return self._mlm.deberta
+
+    @property
+    def classifier(self) -> nn.Module:
+        """The MLM prediction head (for higher LR param group)."""
+        return self._mlm.lm_predictions
+
+    # ------------------------------------------------------------------
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+                token_type_ids: torch.Tensor | None = None,
+                mask_token_indices: torch.Tensor | None = None,
+                extra_features: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Args:
+            input_ids:          (B, seq_len)
+            attention_mask:     (B, seq_len)
+            mask_token_indices: (B,) — position of the single [MASK] token
+                                in each input sequence.
+            extra_features:     Ignored (accepted for call-site compatibility).
+
+        Returns:
+            (B, 1) logit — mean(log P(pos_words)) − mean(log P(neg_words)).
+        """
+        assert mask_token_indices is not None, (
+            "mask_token_indices must be provided for the verbalizer model"
+        )
+        if extra_features is not None:
+            LOG.warning("extra_features are ignored by PCLDeBERTaVerbalizer")
+
+        # Ensure (B,) — single [MASK] per sample
+        if mask_token_indices.dim() > 1:
+            mask_token_indices = mask_token_indices.squeeze(-1)
+
+        # --- MLM forward → vocab logits (B, seq_len, vocab_size) ---
+        logits = self._mlm(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+        ).logits
+
+        B = input_ids.shape[0]
+
+        # Extract logits at the [MASK] position → (B, vocab_size)
+        mask_logits = logits[torch.arange(B, device=logits.device), mask_token_indices]
+
+        # Log-softmax over vocabulary
+        log_probs = torch.log_softmax(mask_logits, dim=-1)  # (B, V)
+
+        # Average log-prob across positive and negative verbalizer tokens
+        pos_lp = log_probs[:, self.pos_ids].mean(dim=-1)  # (B,)
+        neg_lp = log_probs[:, self.neg_ids].mean(dim=-1)  # (B,)
+
+        score = pos_lp - neg_lp  # (B,)
+        return score.unsqueeze(-1)  # (B, 1)
 

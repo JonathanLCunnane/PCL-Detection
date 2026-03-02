@@ -1,4 +1,4 @@
-from utils.pcl_deberta import PCLDeBERTa
+from utils.pcl_deberta import PCLDeBERTa, PCLDeBERTaVerbalizer
 from utils.optim import get_cosine_schedule_with_warmup
 from utils.early_stopping import EarlyStopping
 from utils.eval import evaluate, find_best_threshold
@@ -17,7 +17,7 @@ LOG = getLogger(__name__)
 
 
 def train_model(
-    model: PCLDeBERTa,
+    model: PCLDeBERTa | PCLDeBERTaVerbalizer,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -58,8 +58,10 @@ def train_model(
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # Differential LR: head learns head_lr_multiplier times faster than backbone
+    # Deduplicate: MLM models tie embedding weights between backbone & head
     backbone_params = list(model.backbone.parameters())
-    head_params = list(model.classifier.parameters())
+    backbone_ids = {id(p) for p in backbone_params}
+    head_params = [p for p in model.classifier.parameters() if id(p) not in backbone_ids]
     param_groups = [
         {"params": backbone_params, "lr": lr},
         {"params": head_params, "lr": lr * head_lr_multiplier},
@@ -101,12 +103,15 @@ def train_model(
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
             extra_features = batch.get("extra_features", None)
+            mask_token_indices = batch.get("mask_token_indices", None)
+            if mask_token_indices is not None:
+                mask_token_indices = mask_token_indices.to(device)
 
             # Label smoothing: push targets towards 0.5
             if label_smoothing > 0:
                 labels = labels * (1 - label_smoothing) + 0.5 * label_smoothing
 
-            unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features).squeeze(-1)
+            unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features, mask_token_indices=mask_token_indices).squeeze(-1)
             loss = criterion(unnormalised_scores, labels)
             (loss / accumulate_grad_batches).backward()
 
@@ -307,7 +312,8 @@ def train_category_model(
     binary_criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     backbone_params = list(model.backbone.parameters())
-    head_params = list(model.classifier.parameters())
+    backbone_ids = {id(p) for p in backbone_params}
+    head_params = [p for p in model.classifier.parameters() if id(p) not in backbone_ids]
     optimizer = AdamW([
         {"params": backbone_params, "lr": lr},
         {"params": head_params,     "lr": lr * head_lr_multiplier},

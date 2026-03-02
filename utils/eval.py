@@ -30,8 +30,11 @@ def evaluate(
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)
         extra_features = batch.get("extra_features", None)
+        mask_token_indices = batch.get("mask_token_indices", None)
+        if mask_token_indices is not None:
+            mask_token_indices = mask_token_indices.to(device)
 
-        unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features).squeeze(-1)
+        unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features, mask_token_indices=mask_token_indices).squeeze(-1)
         all_scores.append(unnormalised_scores.cpu())
         all_labels.append(labels.cpu())
         total_loss += criterion(unnormalised_scores, labels).item()
@@ -77,8 +80,11 @@ def find_best_threshold(
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)
         extra_features = batch.get("extra_features", None)
+        mask_token_indices = batch.get("mask_token_indices", None)
+        if mask_token_indices is not None:
+            mask_token_indices = mask_token_indices.to(device)
 
-        unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features).squeeze(-1)
+        unnormalised_scores = model(input_ids=input_ids, attention_mask=attention_mask, extra_features=extra_features, mask_token_indices=mask_token_indices).squeeze(-1)
         all_scores.append(unnormalised_scores.cpu())
         all_labels.append(labels.cpu())
 

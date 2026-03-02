@@ -1,0 +1,14 @@
+{
+  "lr": 2.269753767666658e-05,
+  "weight_decay": 1.1137414908293512e-05,
+  "hidden_dim": 0,
+  "head_lr_multiplier": 1,
+  "aug_factor": 1,
+  "pooling": "MEAN",
+  "warmup_fraction": 0.1,
+  "label_smoothing": 0.0,
+  "batch_size": 32,
+  "num_epochs": 12,
+  "patience": 4,
+  "best_threshold": 0.42500000000000016
+}
