@@ -1,4 +1,4 @@
-from utils.pcl_deberta import PCLDeBERTa, PCLDeBERTaVerbalizer
+from utils.pcl_deberta import PCLDeBERTa, PCLVerbalizer
 from utils.optim import get_cosine_schedule_with_warmup
 from utils.early_stopping import EarlyStopping
 from utils.eval import evaluate, find_best_threshold
@@ -17,7 +17,7 @@ LOG = getLogger(__name__)
 
 
 def train_model(
-    model: PCLDeBERTa | PCLDeBERTaVerbalizer,
+    model: PCLDeBERTa | PCLVerbalizer,
     device: torch.device,
     train_loader: DataLoader,
     val_loader: DataLoader,

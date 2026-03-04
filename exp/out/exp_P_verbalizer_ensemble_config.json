@@ -1,0 +1,56 @@
+{
+  "base_experiment": "L_verbalizer",
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "best_params": {
+    "lr": 6.977921490278437e-06,
+    "weight_decay": 0.000691662498760998,
+    "head_lr_multiplier": 10,
+    "verbalizer": "true_false",
+    "template_idx": 2,
+    "batch_size": 32,
+    "num_epochs": 12,
+    "patience": 4,
+    "best_threshold": 0.275,
+    "warmup_fraction": 0.06,
+    "label_smoothing": 0.0
+  },
+  "ensemble_threshold": 0.4750000000000002,
+  "ensemble_val_f1": 0.5943775100401606,
+  "ensemble_dev_f1": 0.6108374384236454,
+  "member_results": [
+    {
+      "seed": 42,
+      "member_idx": 0,
+      "best_val_f1": 0.5891472868217055,
+      "best_threshold": 0.4750000000000002,
+      "dev_f1": 0.5990783410138248,
+      "dev_precision": 0.5531914893617021,
+      "dev_recall": 0.6532663316582915,
+      "model_path": "/vol/bitbucket/jc4423/models/exp_P_verbalizer_ensemble_member_0_seed42.pt"
+    },
+    {
+      "seed": 123,
+      "member_idx": 1,
+      "best_val_f1": 0.5901639344262295,
+      "best_threshold": 0.4500000000000002,
+      "dev_f1": 0.5806451612903226,
+      "dev_precision": 0.5735294117647058,
+      "dev_recall": 0.5879396984924623,
+      "model_path": "/vol/bitbucket/jc4423/models/exp_P_verbalizer_ensemble_member_1_seed123.pt"
+    },
+    {
+      "seed": 7,
+      "member_idx": 2,
+      "best_val_f1": 0.5746268656716418,
+      "best_threshold": 0.4750000000000002,
+      "dev_f1": 0.6153846153846154,
+      "dev_precision": 0.5898617511520737,
+      "dev_recall": 0.6432160804020101,
+      "model_path": "/vol/bitbucket/jc4423/models/exp_P_verbalizer_ensemble_member_2_seed7.pt"
+    }
+  ]
+}

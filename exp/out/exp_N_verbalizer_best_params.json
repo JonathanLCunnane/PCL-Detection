@@ -1,0 +1,15 @@
+{
+  "lr": 1.1811371850121264e-05,
+  "weight_decay": 0.0005929453342787635,
+  "head_lr_multiplier": 10,
+  "verbalizer": "Yes_No",
+  "template_idx": 3,
+  "gamma": 2.0,
+  "aug_level": 4,
+  "batch_size": 32,
+  "num_epochs": 12,
+  "patience": 4,
+  "best_threshold": 0.275,
+  "warmup_fraction": 0.06,
+  "label_smoothing": 0.0
+}
