@@ -195,7 +195,7 @@ class PCLDeBERTa(nn.Module):
         return scores
 
 
-class PCLDeBERTaVerbalizer(nn.Module):
+class PCLVerbalizer(nn.Module):
     """
     Multi-Word Verbalizer model for PCL detection.
 
@@ -234,7 +234,8 @@ class PCLDeBERTaVerbalizer(nn.Module):
                  pos_verbalizer_ids: list[int],
                  neg_verbalizer_ids: list[int],
                  model_name: str = "microsoft/deberta-v3-base",
-                 gradient_checkpointing: bool = True):
+                 gradient_checkpointing: bool = True,
+                 cache_dir: str | None = None):
         super().__init__()
         assert len(pos_verbalizer_ids) >= 1, "Need at least one positive verbalizer token"
         assert len(neg_verbalizer_ids) >= 1, "Need at least one negative verbalizer token"
@@ -249,7 +250,7 @@ class PCLDeBERTaVerbalizer(nn.Module):
         self.register_buffer("pos_ids", torch.tensor(pos_verbalizer_ids, dtype=torch.long))
         self.register_buffer("neg_ids", torch.tensor(neg_verbalizer_ids, dtype=torch.long))
 
-        self._mlm = AutoModelForMaskedLM.from_pretrained(model_name)
+        self._mlm = AutoModelForMaskedLM.from_pretrained(model_name, cache_dir=cache_dir)
         self._mlm = self._mlm.float()
         if gradient_checkpointing:
             self._mlm.gradient_checkpointing_enable()
@@ -259,20 +260,24 @@ class PCLDeBERTaVerbalizer(nn.Module):
             f"n_pos={self.n_pos}, n_neg={self.n_neg}, "
             f"pos_ids={pos_verbalizer_ids}, neg_ids={neg_verbalizer_ids}"
         )
-
-    # ------------------------------------------------------------------
-    # Properties for training-loop compatibility (differential LR)
-    # ------------------------------------------------------------------
-    @property
-    def backbone(self) -> nn.Module:
-        """The transformer encoder (for lower LR param group)."""
-        # DebertaV2ForMaskedLM stores the encoder as .deberta
-        return self._mlm.deberta
-
-    @property
-    def classifier(self) -> nn.Module:
-        """The MLM prediction head (for higher LR param group)."""
-        return self._mlm.lm_predictions
+        
+        # Resolve backbone/head attribute names (varies by model family)
+        # DeBERTa: .deberta / .lm_predictions
+        # RoBERTa: .roberta / .lm_head
+        # BERT:    .bert    / .cls
+        self._backbone_attr = None
+        self._head_attr = None
+        for bname in ("deberta", "roberta", "bert", "albert", "model"):
+            if hasattr(self._mlm, bname):
+                self.backbone = getattr(self._mlm, bname)
+                break
+        for hname in ("lm_predictions", "lm_head", "cls", "head"):
+            if hasattr(self._mlm, hname):
+                self.classifier = getattr(self._mlm, hname)
+                break
+        assert self.backbone, f"Cannot find backbone on {self._mlm.__class__.__name__}"
+        assert self.classifier, f"Cannot find MLM head on {self._mlm.__class__.__name__}"
+        LOG.info(f"  backbone attr: .{self._backbone_attr}, head attr: .{self._head_attr}")
 
     # ------------------------------------------------------------------
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
