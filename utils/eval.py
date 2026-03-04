@@ -57,7 +57,7 @@ def evaluate(
     return {
         "f1": f1, "precision": precision, "recall": recall,
         "loss": loss, "preds": thresh_preds, "labels": labels_np,
-        "threshold": threshold
+        "threshold": threshold, "probs": probs.numpy(),
     }
 
 
